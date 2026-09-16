@@ -1,0 +1,10 @@
+# Direct dependencies for Python 3.9.
+# Install the PyTorch build appropriate to your CPU/CUDA setup.
+# This file is not an export of system libraries or GPU drivers.
+torch==2.0.1
+numpy==1.26.4
+pandas==2.2.3
+scipy==1.13.1
+scikit-learn==1.6.1
+matplotlib==3.9.2
+pyproj==3.6.1

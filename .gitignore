@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+
+# Dataset files are distributed through GitHub Releases.
+*.csv
+ST-GeoNet-data-*.zip
+.env
+.env.*
+*.log
