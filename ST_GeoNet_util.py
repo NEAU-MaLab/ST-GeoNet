@@ -176,7 +176,7 @@ def load_data(path="data", exp_mode='train', target_size=4096, extra_features=No
         edges = np.loadtxt(os.path.join(graph_path, graph_name), delimiter=',', dtype=np.int32)
         edges = np.array(list(map(idx_map.get, edges.flatten())), dtype=np.int32).reshape(edges.shape)
 
-        # Symmetrize adjacency, add self-loops, and apply row normalization.
+        # Add self-loops to the undirected graph before symmetric degree normalization.
         adj = sp.coo_matrix((
             np.ones(edges.shape[0]), (edges[:, 0], edges[:, 1])),
             shape=(original_size, original_size), dtype=np.float32)
@@ -211,12 +211,12 @@ def load_data(path="data", exp_mode='train', target_size=4096, extra_features=No
     return torch.stack(Features), torch.stack(Labels), torch.stack(Masks), torch.stack(Adj).to_dense()
 
 def normalize(mx):
-    """Return D^-1 times a sparse matrix, with zero rows left at zero."""
-    rowsum = np.array(mx.sum(1))
-    r_inv = np.power(rowsum, -1).flatten()
-    r_inv[np.isinf(r_inv)] = 0.
-    r_mat_inv = sp.diags(r_inv)
-    return r_mat_inv.dot(mx)
+    """Return the symmetrically normalized adjacency D^(-1/2) A D^(-1/2) in CSR format."""
+    degrees = np.asarray(mx.sum(axis=1)).ravel()
+    inv_sqrt = np.zeros_like(degrees, dtype=np.result_type(degrees.dtype, np.float32))
+    np.power(degrees, -0.5, out=inv_sqrt, where=degrees > 0)
+    scale = sp.diags(inv_sqrt)
+    return (scale @ mx @ scale).tocsr()
 
 def accuracy(output, labels, mask=None):
     """Compute point accuracy from scores (B, N, C) and labels (B, N).

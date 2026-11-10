@@ -175,7 +175,7 @@ Graph CSVs have **no header** and contain two integer point identifiers per row:
 0,2
 ```
 
-All endpoints must occur in the matching feature CSV. The loader maps identifiers to row positions, symmetrizes the graph, adds self-loops, and applies row normalization. Features and edges must describe the same sampled points.
+All endpoints must occur in the matching feature CSV. The loader maps identifiers to row positions, symmetrizes the graph, adds self-loops, and applies symmetric degree normalization as in Eq. (7). Each edge from node `j` to node `i` is scaled by `1 / sqrt(degree[i] * degree[j])`, with both degrees computed after adding self-loops. Features and edges must describe the same sampled points.
 
 Graph files must contain at least two edge rows. Prepare samples with at least two points and at most `--num_points` points, which defaults to 4,096. Short samples receive zero-padded features, labels of `-1`, and a validity mask. Loss and reported metrics exclude labels of `-1`. Sample oversized trajectories and generate their matching graphs before loading.
 
@@ -254,6 +254,8 @@ The program selects an available CUDA device and falls back to CPU when CUDA is 
 Keep `--num_points` between `--k` and 4096, the positional-encoding capacity. Keep architecture settings compatible with the checkpoint and the fixed 1,280-channel decoder input. Keep `--T_D_point_cloud False` to use the complete ST-GeoNet feature input, including any selected extras.
 
 ## Outputs and checkpoint compatibility
+
+The bundled checkpoint predates symmetric adjacency normalization. To reproduce the previous loader's predictions with that checkpoint, use revision `5ab801d`. Train and evaluate with the current loader when reporting results for Eq. (7).
 
 Messages are appended to the project's `outputs/<exp_name>/run.log`. Training evaluates every five epochs, including epoch 0. When accuracy improves, `save_checkpoint()` writes the model state dictionary and its feature configuration as a pair:
 
