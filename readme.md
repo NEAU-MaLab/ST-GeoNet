@@ -179,7 +179,7 @@ All endpoints must occur in the matching feature CSV. The loader maps identifier
 
 Graph files must contain at least two edge rows. Prepare samples with at least two points and at most `--num_points` points, which defaults to 4,096. Short samples receive zero-padded features, labels of `-1`, and a validity mask. Loss and reported metrics exclude labels of `-1`. Sample oversized trajectories and generate their matching graphs before loading.
 
-**Memory requirement:** all adjacency matrices are materialized as dense tensors when the dataset loads. A 4,096-by-4,096 float32 matrix uses about 67.1 MB. The 864 training pairs and 368 test pairs require approximately **58.0 GB and 24.7 GB**, respectively, for adjacency tensors alone. Training loads both partitions; intermediate arrays and model activations need additional memory. Use a smaller set of paired files when system memory is limited. Reducing batch size does not remove the full-dataset loading cost.
+Each run loads the adjacency matrices for its partition as dense tensors. A 4,096-by-4,096 float32 matrix uses about 67.1 MB. Training loads the 864 training pairs (about **58.0 GB** for adjacency tensors), and a separate evaluation run loads the 368 test pairs (about **24.7 GB**). Intermediate arrays and model activations need additional memory. Batch size controls the number of trajectories processed together, while the loaded partition stays in memory.
 
 ## Preparing trajectories
 
@@ -201,15 +201,15 @@ python "Graph&degree_gen/gen_feature&graph.py"
 
 Run the following commands from the project root. The default dataset root is `Graph&degree_gen/Degree_data` within the project. Relative `--data_path` and `--model_path` values are resolved against the project root, and outputs are written under the project's `outputs` directory. Absolute paths are also supported.
 
-Training starts from new weights unless `--model_path` is provided. Evaluation requires a checkpoint path. The examples use a prepared dataset at `data/ST_GeoNet_extra` and run one training epoch; set `--epochs` to the intended duration for your experiment.
+Training uses the training partition for exactly 3,000 epochs and saves the final weights. It starts from new weights unless `--model_path` supplies initial weights. To measure performance on the test partition, run a separate command with `--eval True` and the final checkpoint path. The examples use a prepared dataset at `data/ST_GeoNet_extra`.
 
 ### Default six-channel input
 
-Extra columns in the CSV are ignored unless selected. The supplied six-channel checkpoint can be evaluated with the default derived motion attributes:
+These commands train and evaluate a six-channel model with the default derived motion attributes.
 
 ```text
-python main.py --exp_name ST_GeoNet_default --data_path data/ST_GeoNet_extra --batch_size 2 --test_batch_size 1 --epochs 1
-python main.py --eval True --exp_name ST_GeoNet_default_eval --data_path data/ST_GeoNet_extra --model_path outputs/ST_GeoNet_clear/9486_best_model.t7 --test_batch_size 1
+python main.py --exp_name ST_GeoNet_default --data_path data/ST_GeoNet_extra --batch_size 2
+python main.py --eval True --exp_name ST_GeoNet_default_eval --data_path data/ST_GeoNet_extra --model_path outputs/ST_GeoNet_default/models/epoch_3000_model.t7 --test_batch_size 1
 ```
 
 ### Two additional attributes
@@ -217,8 +217,8 @@ python main.py --eval True --exp_name ST_GeoNet_default_eval --data_path data/ST
 The training command selects acceleration and angular acceleration in that order. Evaluation uses the same ordered feature selection:
 
 ```text
-python main.py --exp_name ST_GeoNet_extra --data_path data/ST_GeoNet_extra --extra_features acceleration angular_acceleration --batch_size 2 --test_batch_size 1 --epochs 1
-python main.py --eval True --exp_name ST_GeoNet_extra_eval --data_path data/ST_GeoNet_extra --extra_features acceleration angular_acceleration --model_path outputs/ST_GeoNet_extra/models/epoch_0_model.t7 --test_batch_size 1
+python main.py --exp_name ST_GeoNet_extra --data_path data/ST_GeoNet_extra --extra_features acceleration angular_acceleration --batch_size 2
+python main.py --eval True --exp_name ST_GeoNet_extra_eval --data_path data/ST_GeoNet_extra --extra_features acceleration angular_acceleration --model_path outputs/ST_GeoNet_extra/models/epoch_3000_model.t7 --test_batch_size 1
 ```
 
 ### Motion attributes from the CSV
@@ -226,11 +226,11 @@ python main.py --eval True --exp_name ST_GeoNet_extra_eval --data_path data/ST_G
 These commands use the CSV `speed` and `direction` columns without selecting extras. The input still has six channels, but its motion configuration differs from the default checkpoint:
 
 ```text
-python main.py --exp_name ST_GeoNet_csv_motion --data_path data/ST_GeoNet_extra --motion_source csv --batch_size 2 --test_batch_size 1 --epochs 1
-python main.py --eval True --exp_name ST_GeoNet_csv_motion_eval --data_path data/ST_GeoNet_extra --motion_source csv --model_path outputs/ST_GeoNet_csv_motion/models/epoch_0_model.t7 --test_batch_size 1
+python main.py --exp_name ST_GeoNet_csv_motion --data_path data/ST_GeoNet_extra --motion_source csv --batch_size 2
+python main.py --eval True --exp_name ST_GeoNet_csv_motion_eval --data_path data/ST_GeoNet_extra --motion_source csv --model_path outputs/ST_GeoNet_csv_motion/models/epoch_3000_model.t7 --test_batch_size 1
 ```
 
-`--motion_source csv` can also be combined with `--extra_features`; supply both options identically during training and evaluation. In the examples that load newly trained weights, replace `epoch_0_model.t7` with the checkpoint actually saved by the corresponding run and keep its feature-configuration JSON beside it.
+`--motion_source csv` can also be combined with `--extra_features`. Supply both options identically during training and evaluation.
 
 For these batch-size-2 training examples, use at least two training samples and an even number of samples. The spatial-transform batch-normalization layers require more than one trajectory in each training batch, including the last batch; evaluation can use batch size 1. With multiple GPUs, each device's training batch must also contain more than one trajectory. The full-dataset adjacency memory requirement described above still applies.
 
@@ -245,7 +245,7 @@ The program selects an available CUDA device and falls back to CPU when CUDA is 
 | `--emb_dims` | `1024` | Global geometric feature width |
 | `--graph_feature_dims` | `32` | Graph feature width |
 | `--dropout` | `0.5` | Graph-branch and decoder dropout |
-| `--epochs` | `4000` | Training epochs |
+| `--epochs` | `3000` | Fixed training length. Existing scripts can pass `--epochs 3000`; this is the only accepted value. |
 | `--batch_size` / `--test_batch_size` | `18` / `1` | Trajectories per batch |
 | `--use_sgd` | `True` | SGD; the alternative is Adam |
 | `--lr` | `0.0001` | Base rate; SGD multiplies it by 100 |
@@ -257,11 +257,11 @@ Keep `--num_points` between `--k` and 4096, the positional-encoding capacity. Ke
 
 The bundled checkpoint predates symmetric adjacency normalization. To reproduce the previous loader's predictions with that checkpoint, use revision `5ab801d`. Train and evaluate with the current loader when reporting results for Eq. (7).
 
-Messages are appended to the project's `outputs/<exp_name>/run.log`. Training evaluates every five epochs, including epoch 0. When accuracy improves, `save_checkpoint()` writes the model state dictionary and its feature configuration as a pair:
+Messages are appended to the project's `outputs/<exp_name>/run.log`. On completion of the 3,000th training epoch, `save_checkpoint()` writes the final model state dictionary and its feature configuration to these paths.
 
 ```text
-outputs/<exp_name>/models/epoch_<epoch>_model.t7
-outputs/<exp_name>/models/epoch_<epoch>_model.t7.features.json
+outputs/<exp_name>/models/epoch_3000_model.t7
+outputs/<exp_name>/models/epoch_3000_model.t7.features.json
 ```
 
 The `.t7` file retains the original PyTorch state-dictionary format. The accompanying JSON records the selected feature names and order, motion source, and input configuration. Optimizer and scheduler states are not saved, so loading these files does not resume the complete previous training state.
@@ -278,7 +278,7 @@ Metrics pool valid points from the evaluated partition. `pre`, `rec`, and `f1` d
 
 The bundled `9486_best_model.t7` can be used with no extras and `--motion_source derived`. Adding channels requires training a model with the corresponding input width from scratch. Likewise, CSV-motion evaluation requires weights trained with that motion configuration, even when the input still has six channels. Loading never silently trims weights, fills missing input weights, or accepts a different feature order.
 
-When copying a newly trained model to another folder or machine, copy **both** the `.t7` file and its `.t7.features.json` file, keeping the filenames paired. Use the same ordered `--extra_features` and the same `--motion_source` when loading. For example, `epoch_0_model.t7.features.json` must be beside `epoch_0_model.t7`. Do not replace the JSON with one from a differently configured experiment.
+When copying a newly trained model to another folder or machine, keep `epoch_3000_model.t7` and its `epoch_3000_model.t7.features.json` together. Use the same ordered `--extra_features` and the same `--motion_source` when loading.
 
 ## Segmentation example
 

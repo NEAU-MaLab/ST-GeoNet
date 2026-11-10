@@ -7,7 +7,6 @@ Training and evaluation entry point for ST-GeoNet field-road segmentation.
 """
 
 from __future__ import print_function
-import copy
 import argparse
 from pathlib import Path
 import numpy as np
@@ -24,6 +23,7 @@ from torch.utils.data import DataLoader
 import sklearn.metrics as metrics
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+TRAINING_EPOCHS = 3000
 
 def project_path(value):
     """Resolve a user path against the project directory on Windows or Linux."""
@@ -45,17 +45,12 @@ def _init_():
     (args.output_dir / 'models').mkdir(parents=True, exist_ok=True)
 
 def train(args, io):
-    """Train ST-GeoNet and report point-level metrics on the test split."""
+    """Train on the training split and save the final epoch checkpoint."""
     train_dataset = TrajectoryDataset(
         path=args.data_path, partition='train', num_points=args.num_points,
         T_D=args.T_D_point_cloud, extra_features=args.extra_features,
         motion_source=args.motion_source)
-    test_dataset = TrajectoryDataset(
-        path=args.data_path, partition='test', num_points=args.num_points,
-        T_D=args.T_D_point_cloud, extra_features=args.extra_features,
-        motion_source=args.motion_source)
     train_loader = DataLoader(train_dataset, num_workers=0, batch_size=args.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, num_workers=0, batch_size=args.test_batch_size, shuffle=False)
 
     device = torch.device("cuda" if args.cuda else "cpu")
 
@@ -81,8 +76,7 @@ def train(args, io):
 
     criterion = cal_loss
 
-    best_test_acc = 0
-    for epoch in range(args.epochs):
+    for epoch in range(1, args.epochs + 1):
         # Optimize on the training split, excluding labels equal to -1.
         train_loss = 0.0
         count = 0.0
@@ -129,52 +123,9 @@ def train(args, io):
                                                                                  avg_per_class_acc,)
         io.cprint(outstr)
 
-        # Evaluate every five epochs and retain improvements in point accuracy.
-        if epoch % 5 == 0:
-            test_loss = 0.0
-            count = 0.0
-            model.eval()
-            test_true_cls = []
-            test_pred_cls = []
-
-            for data, seg, mask, adj in test_loader:
-
-                data, seg, mask, adj = data.to(device), seg.to(device), mask.to(device), adj.to(device)
-                batch_size = data.size()[0]
-                seg_pred = model(data, mask=mask, adj=adj)
-
-                seg_flat = seg.view(-1)
-                pred_flat = seg_pred.reshape(-1, 2)
-                loss = criterion(pred_flat, seg_flat)
-
-                pred = seg_pred.max(dim=2)[1]
-                count += batch_size
-                test_loss += loss.item() * batch_size
-                seg_np = seg.cpu().numpy()
-                pred_np = pred.detach().cpu().numpy()
-                test_true_cls.append(seg_np[seg_np != -1].reshape(-1))
-                test_pred_cls.append(pred_np[seg_np != -1].reshape(-1))
-            test_true_cls = np.concatenate(test_true_cls)
-            test_pred_cls = np.concatenate(test_pred_cls)
-            test_acc = metrics.accuracy_score(test_true_cls, test_pred_cls)
-            test_pre = metrics.precision_score(test_true_cls, test_pred_cls)
-            test_rec = metrics.recall_score(test_true_cls, test_pred_cls)
-            test_fl = metrics.f1_score(test_true_cls, test_pred_cls)
-            # Invert binary labels to compute precision/recall/F1 for class 0.
-            test_true_cls_n = 1 - test_true_cls
-            test_pred_cls_n = 1 - test_pred_cls
-            test_pre_n = metrics.precision_score(test_true_cls_n, test_pred_cls_n)
-            test_rec_n = metrics.recall_score(test_true_cls_n, test_pred_cls_n)
-            test_fl_n = metrics.f1_score(test_true_cls_n, test_pred_cls_n)
-            outstr = 'Test %d, loss: %.6f, test acc: %.6f, test pre: %.6f, test rec: %.6f, test f1: %.6f, test pre_n: %.6f, test rec_n: %.6f, test f1_n: %.6f' % (
-                epoch,
-                test_loss * 1.0 / count,
-                test_acc,
-                test_pre, test_rec, test_fl, test_pre_n, test_rec_n, test_fl_n)
-            io.cprint(outstr)
-            if test_acc > best_test_acc:
-                best_test_acc = copy.deepcopy(test_acc)
-                save_checkpoint(model, args.output_dir / 'models' / ('epoch_%d_model.t7' % epoch))
+    checkpoint_path = args.output_dir / 'models' / f'epoch_{args.epochs}_model.t7'
+    save_checkpoint(model, checkpoint_path)
+    io.cprint(f'Saved final checkpoint after {args.epochs} epochs to {checkpoint_path}')
 
 def test(args, io):
     """Evaluate the selected checkpoint, excluding padding from all metrics."""
@@ -237,8 +188,8 @@ if __name__ == "__main__":
                         help='Number of trajectories per batch')
     parser.add_argument('--test_batch_size', type=int, default=1, metavar='batch_size',
                         help='Number of trajectories per batch')
-    parser.add_argument('--epochs', type=int, default=4000, metavar='N',
-                        help='Number of training epochs')
+    parser.add_argument('--epochs', type=int, default=TRAINING_EPOCHS, choices=[TRAINING_EPOCHS],
+                        help='Fixed training duration in epochs')
     parser.add_argument('--use_sgd', type=parse_bool, default=True,
                         help='Use SGD')
     parser.add_argument('--lr', type=float, default=0.0001, metavar='LR',
